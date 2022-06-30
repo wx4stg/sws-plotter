@@ -25,47 +25,55 @@ if __name__ == "__main__":
         if ".dat" in datFile:
             
             datFilePath = path.join(inputDir, datFile)
-            swsTable = pd.read_csv(datFilePath)
-            startYear = swsTable["Year"][0]
+            swsTableMaster = pd.read_csv(datFilePath)
+            startYear = swsTableMaster["Year"][0]
             dtsList = list()
-            for idx, row in swsTable.iterrows():
-                dtsList.append(dt(row["Year"], 1, 1)+timedelta(days=row["Day"])+timedelta(hours=int(str(row["HrMn"])[:2]))+timedelta(minutes=int(str(row["HrMn"])[2:])))
-            swsTable["datetimes"] = dtsList
-            swsTable = swsTable.set_index(["datetimes"])
+            for idx, row in swsTableMaster.iterrows():
+                dtsList.append(dt(row["Year"], 1, 1)+timedelta(days=row["Day"]-1)+timedelta(hours=int(str(row["HrMn"])[:2]))+timedelta(minutes=int(str(row["HrMn"])[2:])))
+            swsTableMaster["datetimes"] = dtsList
+            swsTableMaster = swsTableMaster.set_index(["datetimes"])
 
             # Convert celcius temps to fahrenheit
-            swsTable["TempF"] = swsTable["Temp"] * 1.8 + 32
-            swsTable["dewPoint"] = swsTable["Humid"] * 1.8 + 32
+            swsTableMaster["TempF"] = swsTableMaster["Temp"] * 1.8 + 32
+            swsTableMaster["dewPoint"] = swsTableMaster["Humid"] * 1.8 + 32
 
             # calculate u and v wind components for barbs
             windTimes = list()
             u = list()
             v = list()
-            for i in range(0, len(swsTable["WSpd"])):
-                time = swsTable.index[i]
+            for i in range(0, len(swsTableMaster["WSpd"])):
+                time = swsTableMaster.index[i]
                 windTimes.append(time)
-                spd = units.Quantity(swsTable["WSpd"][i], "knots")
-                dir = units.Quantity(swsTable["WDir"][i], "degrees")
+                spd = units.Quantity(swsTableMaster["WSpd"][i], "knots")
+                dir = units.Quantity(swsTableMaster["WDir"][i], "degrees")
                 uwind, vwind = mpcalc.wind_components(spd, dir)
                 u.append(uwind.magnitude)
                 v.append(vwind.magnitude)
 
+            lastBreak = swsTableMaster.index[0]
+            swsTablesBroken = list()
+            for i in range(1, len(swsTableMaster)):
+                previousDt = swsTableMaster.index[i-1]
+                thisDt = swsTableMaster.index[i]
+                if previousDt < thisDt - timedelta(minutes=10):
+                    swsTableSelected = swsTableMaster[lastBreak:previousDt]
+                    swsTablesBroken.append(swsTableSelected)
+                    lastBreak = thisDt
+            swsTableSelected = swsTableMaster[lastBreak:previousDt]
+            swsTablesBroken.append(swsTableSelected)
             fig = plt.figure()
             px = 1/plt.rcParams["figure.dpi"]
             fig.set_size_inches(1920*px, 1080*px)
             gs = GridSpec(5, 3, figure=fig, height_ratios=[1, 1, 0.25, 1, 0.5])
             gs.update(hspace = 50*px)
+            
             ax1 = fig.add_subplot(gs[0, :])
-            ax1.plot(swsTable["TempF"], "red", label="Temperature")
-            ax1.scatter(swsTable.index, swsTable["TempF"], 1, "red")
-            ax1.legend(loc="upper left")
+            ax1.scatter(swsTableMaster.index, swsTableMaster["TempF"], 1, "red")
             ax1.set_title("Temperature")
             ax1.xaxis.set_major_formatter(pltdates.DateFormatter("%m/%d %H:%M"))
             ax1.set_ylabel("°F")
             ax2 = fig.add_subplot(gs[1, :])
-            ax2.plot(swsTable["dewPoint"], "green", label="Dew Point")
-            ax2.scatter(swsTable.index, swsTable["dewPoint"], 1, "green")
-            ax2.legend(loc="upper left")
+            ax2.scatter(swsTableMaster.index, swsTableMaster["dewPoint"], 1, "green")
             ax2.set_title("Dew Point")
             ax2.xaxis.set_major_formatter(pltdates.DateFormatter("%m/%d %H:%M"))
             ax2.set_ylabel("°F")
@@ -75,36 +83,46 @@ if __name__ == "__main__":
             ax3.tick_params(left=False, labelleft=False)
             ax3.xaxis.set_major_formatter(pltdates.DateFormatter("%m/%d %H:%M"))
             ax4 = fig.add_subplot(gs[3, :])
-            ax4.plot(swsTable["Press"], "blue", label="Barometric Pressure")
-            ax4.scatter(swsTable.index, swsTable["Press"], 1, "blue")
+            ax4.scatter(swsTableMaster.index, swsTableMaster["Press"], 1, "blue")
             ax4.set_title("Barometer")
             ax4.set_ylabel("hPa")
-            ax4.legend(loc="upper left")
             ax4.xaxis.set_major_formatter(pltdates.DateFormatter("%m/%d %H:%M"))
             ax6 = fig.add_subplot(gs[4, :])
             ax5 = ax6.twinx()
-            battplot = ax5.plot(swsTable["User2"], "green", label="Battery Voltage")
-            ax5.scatter(swsTable.index, swsTable["User2"], 1, "green")
+            ax5.scatter(swsTableMaster.index, swsTableMaster["User2"], 1, "green")
             ax5.xaxis.set_major_formatter(pltdates.DateFormatter("%m/%d %H:%M"))
             ax5.set_ylabel("Volts")
             try:
-                swsTable["Rad"] = swsTable["Rad"].astype(float)
-                srplot = ax6.plot(swsTable["Rad"], "yellow", label="Solar Radiation")
-                ax6.scatter(swsTable.index, swsTable["Rad"], 1, "yellow")
+                shouldPlotSolar = True
+                swsTableMaster["Rad"] = swsTableMaster["Rad"].astype(float)
+                srplot = ax6.scatter(swsTableMaster.index, swsTableMaster["Rad"], 1, "yellow")
                 ax6.set_ylabel("W m^-2")
-                fourthPlotLines = srplot+battplot
             except:
+                shouldPlotSolar = False
                 ax6.axis("off")
-                fourthPlotLines = battplot
-            ax5.legend(fourthPlotLines, [line.get_label() for line in fourthPlotLines], loc="upper left")
             ax5.set_title("Solar and Battery")
+
+            for swsTable in swsTablesBroken:
+                firstPlotLines = ax1.plot(swsTable["TempF"], "red", label="Temperature")
+                secondPlotLines = ax2.plot(swsTable["dewPoint"], "green", label="Dew Point")
+                thirdPlotLines = ax4.plot(swsTable["Press"], "blue", label="Barometric Pressure")
+                battplot = ax5.plot(swsTableMaster["User2"], "green", label="Battery Voltage")
+                fourthPlotLines = battplot
+                if shouldPlotSolar:
+                    ax6.plot(swsTable["Rad"], "yellow", label="Solar Radiation")
+                    fourthPlotLines = srplot+battplot
+            ax1.legend(firstPlotLines, [line.get_label() for line in firstPlotLines], loc="upper left")
+            ax2.legend(secondPlotLines, [line.get_label() for line in secondPlotLines], loc="upper left")
+            ax4.legend(thirdPlotLines, [line.get_label() for line in thirdPlotLines], loc="upper left")
+            ax5.legend(fourthPlotLines, [line.get_label() for line in fourthPlotLines], loc="upper left")
+            
             fig.subplots_adjust(bottom = 0.21)
             fig.subplots_adjust(top = 0.95)
             fig.subplots_adjust(right = 0.95)
             fig.subplots_adjust(left = 0.05)
             fig.set_size_inches(1920*px, 1080*px)
             tax = fig.add_axes([ax5.get_position().x0+(ax5.get_position().width/2)-(ax5.get_position().width/6),0.1,(ax5.get_position().width/3),.05])
-            tax.text(0.5, 0.6, "TAMU TRACER AIO2 Weather Station\nValid "+swsTable.index[0].strftime("%b %d %H:%M")+" through "+swsTable.index[-1].strftime("%b %d %H:%M"), horizontalalignment="center", verticalalignment="center", fontsize=16)
+            tax.text(0.5, 0.6, "TAMU TRACER AIO2 Weather Station\nValid "+swsTableMaster.index[0].strftime("%b %d %H:%M")+" through "+swsTableMaster.index[-1].strftime("%b %d %H:%M"), horizontalalignment="center", verticalalignment="center", fontsize=16)
             plt.setp(tax.spines.values(), visible=False)
             tax.tick_params(left=False, labelleft=False)
             tax.tick_params(bottom=False, labelbottom=False)
